@@ -1,51 +1,71 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-
-let genAI = null;
-
-export function getGenAI() {
-  if (!genAI) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error('GEMINI_API_KEY is not set');
-    }
-    genAI = new GoogleGenerativeAI(apiKey);
-  }
-  return genAI;
-}
+// Generic OpenAI-compatible AI client
+// Works with: Groq, NVIDIA, HuggingFace, OpenRouter, etc.
 
 export async function* streamChat(systemPrompt, messages) {
-  const genAI = getGenAI();
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const apiKey = process.env.AI_API_KEY;
+  const baseUrl = process.env.AI_BASE_URL || 'https://api.groq.com/openai/v1';
+  const model = process.env.AI_MODEL || 'llama-3.3-70b-versatile';
 
-  // Build chat history (all messages except the last user message)
-  const history = [];
-  const chatMessages = [...messages];
-  const lastMessage = chatMessages.pop();
-
-  for (const msg of chatMessages) {
-    history.push({
-      role: msg.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: msg.content }],
-    });
+  if (!apiKey) {
+    throw new Error('AI_API_KEY is not set in .env');
   }
 
-  const chat = model.startChat({
-    history,
-    systemInstruction: { parts: [{ text: systemPrompt }] },
-    generationConfig: {
-      temperature: 1.0,
-      topP: 0.95,
-      topK: 40,
-      maxOutputTokens: 2048,
+  // Build OpenAI-compatible messages array
+  const apiMessages = [
+    { role: 'system', content: systemPrompt },
+    ...messages.map(m => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: m.content,
+    })),
+  ];
+
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
     },
+    body: JSON.stringify({
+      model,
+      messages: apiMessages,
+      stream: true,
+      temperature: 1.0,
+      max_tokens: 2048,
+    }),
   });
 
-  const result = await chat.sendMessageStream(lastMessage.content);
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`AI API error (${response.status}): ${errorText}`);
+  }
 
-  for await (const chunk of result.stream) {
-    const text = chunk.text();
-    if (text) {
-      yield text;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('data: ')) {
+        const data = trimmed.slice(6);
+        if (data === '[DONE]') return;
+        try {
+          const parsed = JSON.parse(data);
+          const text = parsed?.choices?.[0]?.delta?.content;
+          if (text) {
+            yield text;
+          }
+        } catch {
+          // Skip unparseable chunks
+        }
+      }
     }
   }
 }
