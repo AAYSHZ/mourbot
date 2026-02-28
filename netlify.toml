@@ -1,0 +1,32 @@
+# Netlify Configuration for MOURBOT
+
+[build]
+  command = "cd client && npm install && npm run build"
+  publish = "client/dist"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  included_files = ["node_modules/@google/generative-ai/**"]
+
+# Redirect API calls to Netlify Functions
+[[redirects]]
+  from = "/api/chat"
+  to = "/.netlify/functions/chat"
+  status = 200
+
+[[redirects]]
+  from = "/api/gif"
+  to = "/.netlify/functions/gif"
+  status = 200
+
+[[redirects]]
+  from = "/api/health"
+  to = "/.netlify/functions/health"
+  status = 200
+
+# SPA fallback — all other routes go to index.html
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
